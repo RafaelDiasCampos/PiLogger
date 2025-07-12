@@ -143,13 +143,13 @@ class VirtualKeyboard:
                         # Reverse lookup on ecodes.KEY to get the key code
                         key = next((k for k, v in ecodes.KEY.items() if v == key_name), None)
                         
+                        key = (1, key) if key is not None else None
+                        
                         if key is not None:
                             if action == "pressed":
                                 self.uinput_device.emit(key, 1)
-                                self.log_event(key, "pressed")
                             elif action == "released":
                                 self.uinput_device.emit(key, 0)
-                                self.log_event(key, "released")
                         
         except IOError as e:
             print(f"Error reading log file {log_file}: {e}")
