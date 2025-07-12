@@ -4,7 +4,9 @@ import os
 
 
 class KeyboardSniffer:
-    def __init__(self, port: str = '/dev/serial0', baudrate: int = 115200, verbose: bool = False):
+    def __init__(self, port: str = '/dev/serial0', baudrate: int = 115200, verbose: bool = True):
+        self.verbose = verbose        
+        
         # Regular expressions to match device info and keyboard reports
         self.device_info_pattern = re.compile(
             r'\[\+\] DeviceInfo: VID=([0-9A-Fa-f]+) PID=([0-9A-Fa-f]+) '
@@ -15,6 +17,9 @@ class KeyboardSniffer:
 
         self.disconnect_pattern = re.compile(
             r'\[\-\] HID device removed: addr=([0-9]+), instance=([0-9]+)')
+        
+        # Store the current LED state
+        self.led_state = 0
 
         # Paths and constants for USB gadget configuration
         self.hid_device_path = '/dev/hidg0'
@@ -75,7 +80,7 @@ class KeyboardSniffer:
         # Wait for a keyboard to be connected and device info to be returned
         self.device_info = self.get_device_info()
 
-        if verbose:
+        if self.verbose:
             print("[+] Device information retrieved successfully.")
             print(f"Device Info: VID={self.device_info['vid']}, "
                   f"PID={self.device_info['pid']}, "
@@ -84,10 +89,10 @@ class KeyboardSniffer:
                   f"Serial={self.device_info['serial']}")
 
         # Start the USB gadget with the retrieved device info
-        if verbose:
+        if self.verbose:
             print("[+] Starting USB gadget...")
         self.start_usb_gadget(self.device_info)
-        if verbose:
+        if self.verbose:
             print("[+] USB gadget started successfully.")
 
     def reset_keyboard(self) -> None:
@@ -110,7 +115,7 @@ class KeyboardSniffer:
                     'product': match.group(4),
                     'serial': match.group(5)
                 }
-            else:
+            elif self.verbose:
                 print(f"Received line: {line}")
 
     def get_keycodes_filtered(self) -> 'Generator[tuple[int, list[int]], None, None]':
@@ -146,44 +151,16 @@ class KeyboardSniffer:
                 yield mod, keycodes
             else:
                 if self.disconnect_pattern.match(line):
-                    print(f"Device disconnected: {line}")
+                    
+                    if self.verbose:
+                        print(f"Device disconnected: {line}")
+                        
                     self.stop_gadget()
                     self.device_info = self.get_device_info()
                     self.start_usb_gadget(self.device_info)
-                print(f"Received line: {line}")  # Debug output
-
-    def keycode_to_ascii(self, mod: int, keycode: int) -> str | None:
-        # HID usage ID to ASCII mapping (US layout, minimal)
-        hid_keycodes = {
-            0x04: 'a', 0x05: 'b', 0x06: 'c', 0x07: 'd',
-            0x08: 'e', 0x09: 'f', 0x0A: 'g', 0x0B: 'h',
-            0x0C: 'i', 0x0D: 'j', 0x0E: 'k', 0x0F: 'l',
-            0x10: 'm', 0x11: 'n', 0x12: 'o', 0x13: 'p',
-            0x14: 'q', 0x15: 'r', 0x16: 's', 0x17: 't',
-            0x18: 'u', 0x19: 'v', 0x1A: 'w', 0x1B: 'x',
-            0x1C: 'y', 0x1D: 'z', 0x1E: '1', 0x1F: '2',
-            0x20: '3', 0x21: '4', 0x22: '5', 0x23: '6',
-            0x24: '7', 0x25: '8', 0x26: '9', 0x27: '0',
-            0x28: '\n', 0x2C: ' ', 0x2D: '-', 0x2E: '=',
-            0x2F: '[', 0x30: ']', 0x31: '\\', 0x33: ';',
-            0x34: '\'', 0x35: '`', 0x36: ',', 0x37: '.',
-            0x38: '/'
-        }
-
-        shifted_keys = {
-            '1': '!', '2': '@', '3': '#', '4': '$', '5': '%',
-            '6': '^', '7': '&', '8': '*', '9': '(', '0': ')',
-            '-': '_', '=': '+', '[': '{', ']': '}', '\\': '|',
-            ';': ':', '\'': '"', '`': '~', ',': '<', '.': '>', '/': '?'
-        }
-
-        key = hid_keycodes.get(keycode)
-        if not key:
-            return None
-
-        if mod & 0x22:  # Shift held
-            return shifted_keys.get(key, key.upper())
-        return key
+                    
+                if self.verbose:
+                    print(f"Received line: {line}")  # Debug output
 
     def start_usb_gadget(self, device_info) -> None:
         # Ensure any previous gadget is stopped
@@ -295,28 +272,9 @@ class KeyboardSniffer:
         try:
             data = os.read(self.hid_fd, 1)
             if data:
+                self.led_state = data[0]
                 self.ser.write(data)  # Echo back the LED state
         except BlockingIOError:
             pass
         except Exception as e:
             raise RuntimeError(f"Failed to read LED report: {e}")
-
-
-def main():
-    decoder = KeyboardSniffer()
-    print("Listening for keyboard input... Press Ctrl+C to exit.")
-
-    try:
-        for mod, keycodes in decoder.get_keycodes_filtered():
-            for keycode in keycodes:
-                ascii_char = decoder.keycode_to_ascii(mod, keycode)
-                if ascii_char:
-                    print(ascii_char, end='', flush=True)
-    except KeyboardInterrupt:
-        print("\nExiting...")
-    finally:
-        decoder.ser.close()
-
-
-if __name__ == '__main__':
-    main()
